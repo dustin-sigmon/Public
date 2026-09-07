@@ -3,4 +3,3 @@ Software/Winget/_Main/Winget-Install-NoReboot.ps1
 Software/Winget/_Main/Winget-Install-YesReboot.ps1
 
 # Large binary assets — hosted on external mirror (OVH), not in git
-Software/Winget/_Main/assets/
