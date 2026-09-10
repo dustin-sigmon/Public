@@ -1,38 +1,74 @@
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# Get installed software that winget recognizes
-$raw = winget list
+try {
+    # Find newest Desktop App Installer
+    $DesktopAppInstaller = Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller |
+        Sort-Object Version -Descending |
+        Select-Object -First 1
 
-# Filter out header/footer lines
-$lines = $raw | Where-Object {
-    $_.Trim() -ne '' -and
-    $_ -notmatch '^-{5,}' -and
-    $_ -notmatch 'Name' -and
-    $_ -notmatch 'Id' -and
-    $_ -notmatch 'Version' -and
-    $_ -notmatch 'Source'
-}
+    if (-not $DesktopAppInstaller) {
+        throw "Microsoft.DesktopAppInstaller not found."
+    }
 
-# Parse each line and keep only items with a winget source
-$wingetManagedSoftware = foreach ($line in $lines) {
+    # Build winget path
+    $Winget = Join-Path $DesktopAppInstaller.InstallLocation "winget.exe"
 
-    $cols = $line -split '\s{2,}'
+    if (-not (Test-Path $Winget)) {
+        throw "winget.exe not found at: $Winget"
+    }
 
-    if ($cols.Count -ge 4) {
-        $name   = $cols[0].Trim()
-        $source = $cols[3].Trim()
+    Write-Host "Using Winget: $Winget"
 
-        if ($source -eq 'winget') {
-            $name
+    # Get installed software recognized by winget
+    $raw = & $Winget list `
+        --accept-source-agreements `
+        --disable-interactivity 2>&1
+
+    # Remove headers and other noise
+    $lines = $raw | Where-Object {
+        $_ -and
+        $_.ToString().Trim() -ne '' -and
+        $_ -notmatch '^Name\s+' -and
+        $_ -notmatch '^Id\s+' -and
+        $_ -notmatch '^Version\s+' -and
+        $_ -notmatch '^Source\s+' -and
+        $_ -notmatch '^-{5,}'
+    }
+
+    # Keep only software whose source is winget
+    $wingetManagedSoftware = foreach ($line in $lines) {
+
+        $cols = $line.ToString() -split '\s{2,}'
+
+        if ($cols.Count -ge 4) {
+
+            $name = $cols[0].Trim()
+
+            # Source is typically the last column
+            $source = $cols[$cols.Count - 1].Trim()
+
+            if ($source -eq 'winget') {
+                $name
+            }
         }
     }
+
+    $wingetManagedSoftware = $wingetManagedSoftware |
+        Where-Object { $_ } |
+        Sort-Object -Unique
+
+    if (-not $wingetManagedSoftware) {
+        $wingetManagedValue = "No winget-managed software found"
+    }
+    else {
+        $wingetManagedValue = $wingetManagedSoftware -join "`n"
+    }
+}
+catch {
+    $wingetManagedValue = "Winget Error: $($_.Exception.Message)"
 }
 
-# Convert sorted, unique software names to newline-delimited text
-$wingetManagedValue = ($wingetManagedSoftware | Sort-Object -Unique) -join "`n"
-
-# Show output correctly in console
 Write-Host $wingetManagedValue
 
 # Send to Ninja custom field
-#Ninja-Property-Set -Name 'wingetManagedSoftware' -Value $wingetManagedValue
+Ninja-Property-Set -Name 'wingetManagedSoftware' -Value $wingetManagedValue
