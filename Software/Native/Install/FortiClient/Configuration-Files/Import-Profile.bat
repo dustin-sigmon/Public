@@ -1,0 +1,1 @@
+"C:\Program Files\Fortinet\FortiClient\FCConfig.exe" -m all -f "C:\TempDeploy\FortiClientVPN\VPN.conf" -o import -i 1 -q
