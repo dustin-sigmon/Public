@@ -94,87 +94,86 @@ else {
 
 Write-Host "Collecting WinGet updates..."
 
-$updates = @()
+$updateListOutput = & $Winget upgrade `
+    --include-unknown `
+    --accept-source-agreements `
+    --disable-interactivity 2>$null
 
-try {
-
-    $jsonOutput = & $Winget upgrade `
-        --include-unknown `
-        --accept-source-agreements `
-        --disable-interactivity `
-        --output json 2>$null
-
-    if ($LASTEXITCODE -eq 0 -and $jsonOutput) {
-
-        Write-Host "Using JSON output."
-
-        $json = $jsonOutput | ConvertFrom-Json
-
-        if ($json.Data) {
-
-            $updates = foreach ($item in $json.Data) {
-
-                [PSCustomObject]@{
-                    Name = $item.PackageName
-                    Id   = $item.PackageIdentifier
-                }
-            }
-        }
-    }
-}
-catch {
-
-    Write-Warning "JSON parsing unavailable. Falling back to text output."
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "WinGet could not collect available updates (exit code $LASTEXITCODE)."
+    return
 }
 
-# --- TEXT PARSING FALLBACK ---
+# Find header line and column positions for fixed-width parsing
+$headerLine = $null
+$idIdx = -1
+$verIdx = -1
 
-if (-not $updates -or $updates.Count -eq 0) {
+foreach ($line in $updateListOutput) {
+    $str = $line.ToString()
+    if ($str -match '^Name\s+Id') {
+        $headerLine = $str
+        $idIdx = $headerLine.IndexOf('Id')
+        $verIdx = $headerLine.IndexOf('Version')
+        break
+    }
+}
 
-    Write-Host "Using text output fallback."
+$updates = foreach ($line in $updateListOutput) {
 
-    $updateListOutput = & $Winget upgrade `
-        --include-unknown `
-        --accept-source-agreements `
-        --disable-interactivity 2>$null
+    $str = $line.ToString().TrimEnd()
 
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "WinGet could not collect available updates (exit code $LASTEXITCODE)."
-        return
+    if ([string]::IsNullOrWhiteSpace($str)) {
+        continue
     }
 
-    $updates = foreach ($line in $updateListOutput) {
+    if ($str -match '^Name\s+Id') {
+        continue
+    }
 
-        $line = $line.ToString().Trim()
+    if ($str -match '^-{5,}') {
+        continue
+    }
 
-        if (:IsNullOrWhiteSpace($line)) {
-            continue
+    if ($str -match 'upgrades available') {
+        continue
+    }
+
+    if ($str -match 'No installed package found') {
+        continue
+    }
+
+    if ($str -match 'No applicable upgrade found') {
+        continue
+    }
+
+    if ($headerLine -and $idIdx -gt 0 -and $verIdx -gt $idIdx) {
+
+        $name = if ($str.Length -gt 0) { $str.Substring(0, [Math]::Min($str.Length, $idIdx)).Trim() } else { "" }
+        $id   = if ($str.Length -gt $idIdx) { $str.Substring($idIdx, [Math]::Min($str.Length - $idIdx, $verIdx - $idIdx)).Trim() } else { "" }
+
+        if ($id -match '\s') {
+            $id = ($id -split '\s+')[0]
         }
 
-        if ($line -match '^Name\s+Id') {
-            continue
-        }
-
-        if ($line -match '^-{5,}') {
-            continue
-        }
-
-        if ($line -match 'upgrades available') {
-            continue
-        }
-
-        if ($line -match 'No installed package found') {
-            continue
-        }
-
-        $columns = $line -split '\s{2,}'
-
-        if ($columns.Count -ge 2) {
+        if ($name -and $id) {
 
             [PSCustomObject]@{
-                Name = $columns[0].Trim()
-                Id   = $columns[1].Trim()
+                Name = $name
+                Id   = $id
             }
+            continue
+        }
+    }
+
+    # Fallback to double-space column splitting
+    $columns = $str.Trim() -split '\s{2,}'
+
+    if ($columns.Count -ge 2) {
+
+        [PSCustomObject]@{
+            Name = $columns[0].Trim()
+            Id   = ($columns[1].Trim() -split '\s+')[0]
         }
     }
 }
